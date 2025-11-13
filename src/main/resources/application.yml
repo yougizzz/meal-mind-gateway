@@ -1,0 +1,79 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: gateway-service
+
+  cloud:
+    gateway:
+      default-filters:
+        - name: CircuitBreaker
+          args:
+            name: defaultCircuitBreaker
+            fallbackUri: forward:/fallback
+      routes:
+        - id: auth-service
+          uri: http://auth-service:8080
+          predicates:
+            - Path=/api/auth/**
+          filters:
+            - StripPrefix=1
+
+        - id: user-service
+          uri: http://user-service:8080
+          predicates:
+            - Path=/api/user/**, /api/fridge/**
+          filters:
+            - StripPrefix=1
+            - name: JwtValidationFilter
+            - name: RateLimitFilter
+
+        - id: recipe-service
+          uri: http://recipe-service:8080
+          predicates:
+            - Path=/api/recipe/**, /api/sse/**
+          filters:
+            - StripPrefix=1
+            - name: JwtValidationFilter
+            - name: RateLimitFilter
+
+        - id: grocery-service
+          uri: http://grocery-service:8080
+          predicates:
+            - Path=/api/grocery/**
+          filters:
+            - StripPrefix=1
+            - name: JwtValidationFilter
+
+  redis:
+    host: redis
+    port: 6379
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+
+jwt:
+  secret: ${JWT_SECRET:your-super-secret-jwt-key-here-256-bits}
+
+gateway:
+  rate-limit:
+    window-seconds: 60
+
+logging:
+  level:
+    com.mealmind.gateway: ${LOG_LEVEL:INFO}
+    org.springframework.security: INFO
+    org.hibernate.SQL: INFO
+    org.hibernate.type.descriptor.sql.BasicBinder: INFO
+  pattern:
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss}){faint} %clr([%thread]){magenta} %clr(%-5level){green} %clr(%logger{36}){cyan} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/mealmind-gateway.log
+    max-size: 100MB
+    max-history: 30
+
