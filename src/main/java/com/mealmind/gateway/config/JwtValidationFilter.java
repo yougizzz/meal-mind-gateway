@@ -1,77 +1,71 @@
 package com.mealmind.gateway.config;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
-import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
+import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.http.server.reactive.ServerHttpResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 import org.springframework.web.server.ServerWebExchange;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import reactor.core.publisher.Mono;
 
-import java.nio.charset.StandardCharsets;
-import javax.crypto.SecretKey;
-
 @Component
-public class JwtValidationFilter extends AbstractGatewayFilterFactory<JwtValidationFilter.Config> {
+public class JwtValidationFilter implements GatewayFilter {
 
-    private static final Logger log = LoggerFactory.getLogger(JwtValidationFilter.class);
-    private static final String BEARER_PREFIX = "Bearer ";
-    private final SecretKey signingKey;
-
-    public JwtValidationFilter(@Value("${jwt.secret}") String secret) {
-        super(Config.class);
-        this.signingKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
-    }
+    @Value("${jwt.secret}")
+    private String secret;
 
     @Override
-    public GatewayFilter apply(Config config) {
-        return (exchange, chain) -> {
-            ServerHttpRequest request = exchange.getRequest();
-            String authHeader = request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        ServerHttpRequest request = exchange.getRequest();
 
-            if (!StringUtils.hasText(authHeader) || !authHeader.startsWith(BEARER_PREFIX)) {
-                log.debug("Missing or malformed Authorization header for path {}", request.getURI().getPath());
-                return unauthorized(exchange);
-            }
+        // Skip public routes
+        String path = request.getURI().getPath();
+        if (path.startsWith("/api/auth")) {
+            return chain.filter(exchange);
+        }
 
-            String token = authHeader.substring(BEARER_PREFIX.length());
+        String auth = request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+        if (auth == null || !auth.startsWith("Bearer ")) {
+            return unauthorized(exchange, "Missing token");
+        }
 
-            try {
-                Claims claims = Jwts.parser()
-                        .verifyWith(signingKey)
-                        .build()
-                        .parseSignedClaims(token)
-                        .getPayload();
+        try {
+            String token = auth.substring(7);
+            Claims claims = Jwts.parser()
+                .verifyWith(Keys.hmacShaKeyFor(secret.getBytes()))
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
 
-                ServerHttpRequest mutatedRequest = request.mutate()
-                        .header("X-Auth-Subject", claims.getSubject())
-                        .build();
+            // Inject user ID into header
+            ServerHttpRequest mutated = request.mutate()
+                .header("X-User-Id", claims.getSubject())
+                .header("X-User-Role", claims.get("role", String.class))
+                .build();
 
-                exchange.getAttributes().put("jwtClaims", claims);
-
-                return chain.filter(exchange.mutate().request(mutatedRequest).build());
-            } catch (JwtException ex) {
-                log.warn("JWT validation failed: {}", ex.getMessage());
-                return unauthorized(exchange);
-            }
-        };
+            return chain.filter(exchange.mutate().request(mutated).build());
+        } catch (ExpiredJwtException e) {
+            return unauthorized(exchange, "Token expired");
+        } catch (Exception e) {
+            return unauthorized(exchange, "Invalid token");
+        }
     }
 
-    private Mono<Void> unauthorized(ServerWebExchange exchange) {
-        exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-        return exchange.getResponse().setComplete();
-    }
-
-    public static class Config {
+    private Mono<Void> unauthorized(ServerWebExchange exchange, String msg) {
+        ServerHttpResponse response = exchange.getResponse();
+        response.setStatusCode(HttpStatus.UNAUTHORIZED);
+        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        String json = "{\"error\": \"" + msg + "\"}";
+        return response.writeWith(Mono.just(response.bufferFactory().wrap(json.getBytes())));
     }
 }
 

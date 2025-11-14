@@ -1,33 +1,31 @@
 package com.mealmind.gateway.route;
 
-import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
-import io.github.resilience4j.timelimiter.TimeLimiterConfig;
-import org.springframework.cloud.circuitbreaker.resilience4j.ReactiveResilience4JCircuitBreakerFactory;
-import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JConfigBuilder;
-import org.springframework.cloud.client.circuitbreaker.Customizer;
+import org.springframework.cloud.gateway.route.RouteLocator;
+import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
+import com.mealmind.gateway.config.JwtValidationFilter;
+import com.mealmind.gateway.config.RateLimitFilter;
 
 @Configuration
 public class RouteConfig {
+        private static final Logger log = LoggerFactory.getLogger(RouteConfig.class);
 
-    @Bean
-    public Customizer<ReactiveResilience4JCircuitBreakerFactory> defaultCustomizer() {
-        return factory -> factory.configureDefault(id -> new Resilience4JConfigBuilder(id)
-                .circuitBreakerConfig(CircuitBreakerConfig.custom()
-                        .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
-                        .slidingWindowSize(20)
-                        .permittedNumberOfCallsInHalfOpenState(5)
-                        .failureRateThreshold(50.0f)
-                        .waitDurationInOpenState(Duration.ofSeconds(30))
-                        .build())
-                .timeLimiterConfig(TimeLimiterConfig.custom()
-                        .timeoutDuration(Duration.ofSeconds(5))
-                        .cancelRunningFuture(true)
-                        .build())
-                .build());
-    }
+        @Bean
+        public RouteLocator routeLocator(
+                        RouteLocatorBuilder builder,
+                        JwtValidationFilter jwtFilter,
+                        RateLimitFilter rateLimitFilter) {
+                log.info("Configuring gateway routes...");
+                log.info("Auth route: /api/auth/** -> http://localhost:8082/auth/**");
+                
+                return builder.routes()
+                                .route("auth", r -> r.path("/api/auth/**")
+                                                .filters(f -> f.stripPrefix(1))
+                                                .uri("http://localhost:8082"))
+                                .build();
+        }
 }
-
