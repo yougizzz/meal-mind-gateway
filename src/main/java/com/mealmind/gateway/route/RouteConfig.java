@@ -19,13 +19,21 @@ public class RouteConfig {
                         RouteLocatorBuilder builder,
                         JwtValidationFilter jwtFilter,
                         RateLimitFilter rateLimitFilter) {
-                log.info("Configuring gateway routes...");
-                log.info("Auth route: /api/auth/** -> http://localhost:8082/auth/**");
                 
                 return builder.routes()
                                 .route("auth", r -> r.path("/api/auth/**")
                                                 .filters(f -> f.stripPrefix(1))
                                                 .uri("http://localhost:8082"))
+                                .route("users", r -> r.path("/api/users/**")
+                                                .filters(f -> f.stripPrefix(1)
+                                                .filter(jwtFilter)
+                                                .filter(rateLimitFilter))
+                                                .uri("http://localhost:8083"))
+                                .route("recipes", r -> r.path("/api/recipes/**")
+                                                .filters(f -> f.stripPrefix(1)
+                                                .filter(jwtFilter)
+                                                .filter(rateLimitFilter))
+                                                .uri("http://localhost:8084"))
                                 .build();
         }
 }
